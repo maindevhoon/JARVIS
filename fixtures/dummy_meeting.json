@@ -1,0 +1,44 @@
+{
+  "meetingId": "dummy-product-sync-001",
+  "title": "Jarvis Product Strategy Sync",
+  "userName": "Dev",
+  "participants": ["Dev", "Maya", "Arjun"],
+  "nextMeeting": "Next Friday",
+  "segments": [
+    {
+      "timestamp": "00:00:08",
+      "speaker": "Maya",
+      "text": "Let's use today to decide what the Jarvis demo must prove before our next review."
+    },
+    {
+      "timestamp": "00:01:12",
+      "speaker": "Arjun",
+      "text": "The voice loop feels fast enough now. I will clean up the presentation slides before Wednesday."
+    },
+    {
+      "timestamp": "00:03:40",
+      "speaker": "Maya",
+      "text": "Dev, can you investigate whether a small team could build a credible OpenAI API competitor or focused alternative with a total initial budget below one thousand US dollars? We need to understand what is genuinely possible, what is not, and which narrow market wedge would be defensible."
+    },
+    {
+      "timestamp": "00:04:15",
+      "speaker": "Dev",
+      "text": "I do not have a defensible answer yet. I will research the infrastructure, model API, distribution, and operating-cost tradeoffs and bring a recommendation to our next meeting."
+    },
+    {
+      "timestamp": "00:05:05",
+      "speaker": "Maya",
+      "text": "Good. Please include current sources, explicit assumptions, and a clear yes, no, or only-if conclusion."
+    },
+    {
+      "timestamp": "00:06:20",
+      "speaker": "Arjun",
+      "text": "Unrelated note: the coffee machine is broken again."
+    },
+    {
+      "timestamp": "00:07:10",
+      "speaker": "Maya",
+      "text": "Decision: the next Jarvis milestone is meeting capture to evidence-backed research, not more visual polish."
+    }
+  ]
+}

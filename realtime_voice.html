@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Jarvis</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #080b10; color: #eaf2ff; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+    main { width: min(760px, calc(100vw - 32px)); }
+    h1 { font-size: 22px; font-weight: 600; }
+    #answer { min-height: 180px; padding: 20px; background: #101722; border: 1px solid #243247; border-radius: 14px; white-space: pre-wrap; }
+    textarea { box-sizing: border-box; width: 100%; margin-top: 16px; padding: 16px; border-radius: 14px; border: 1px solid #31455f; background: #0d131d; color: inherit; resize: vertical; }
+    footer, #micControls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; color: #8fa4bd; font-size: 13px; }
+    button { padding: 10px 18px; border: 0; border-radius: 10px; background: #65a8ff; color: #04111f; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: wait; }
+    button.secondary { background: #243247; color: #eaf2ff; }
+    button.live { background: #ff5d71; color: #210208; }
+    #level { flex: 1; height: 8px; overflow: hidden; border-radius: 99px; background: #1a2534; }
+    #level > i { display: block; width: 0; height: 100%; background: #65a8ff; transition: width 70ms linear; }
+    #metrics { text-align: right; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Jarvis</h1>
+  <div id="answer">Ready. Start listening, speak naturally, and pause when your question is complete.</div>
+  <textarea id="input" rows="4" autofocus placeholder="Your transcript appears here…"></textarea>
+  <div id="micControls">
+    <button id="listen" class="secondary">Start listening</button>
+    <button id="mute" class="secondary" disabled>Mute</button>
+    <span id="micState">Mic off</span>
+    <span id="level"><i></i></span>
+  </div>
+  <footer>
+    <span id="status">Connecting…</span>
+    <span id="metrics"></span>
+    <button id="send" disabled>Ask</button>
+  </footer>
+</main>
+<script>
+const answer = document.querySelector('#answer');
+const input = document.querySelector('#input');
+const status = document.querySelector('#status');
+const metrics = document.querySelector('#metrics');
+const send = document.querySelector('#send');
+const listen = document.querySelector('#listen');
+const mute = document.querySelector('#mute');
+const micState = document.querySelector('#micState');
+const levelBar = document.querySelector('#level > i');
+let socket;
+let listenSocket;
+let audioQueue = [];
+let playing = false;
+let currentAudio = null;
+let listening = false;
+let muted = false;
+let speechActive = false;
+let speechStartedAt = 0;
+let silenceStartedAt = 0;
+let micStream;
+let utteranceRecorder;
+let audioContext;
+let analyser;
+let utteranceChunks = [];
+let pendingTranscript = '';
+const sessionId = localStorage.getItem('jarvisSessionId') || crypto.randomUUID();
+localStorage.setItem('jarvisSessionId', sessionId);
+
+const SPEECH_THRESHOLD = 0.022;
+const END_SILENCE_MS = 700;
+const MIN_SPEECH_MS = 300;
+
+function connect() {
+  const websocketHost = location.protocol === 'file:' ? '127.0.0.1:8787' : location.host;
+  socket = new WebSocket(`ws://${websocketHost}/ws`);
+  socket.onopen = () => { status.textContent = 'Ready'; send.disabled = false; };
+  socket.onclose = () => { status.textContent = 'Reconnecting…'; send.disabled = true; setTimeout(connect, 1000); };
+  socket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.type === 'token') answer.textContent += message.text;
+    if (message.type === 'status' || message.type === 'warning') status.textContent = message.message;
+    if (message.type === 'memory') status.textContent = `${message.count} memories · ${Math.round(message.latency * 1000)}ms`;
+    if (message.type === 'metric' && message.name === 'firstToken') metrics.textContent = `first token ${message.seconds.toFixed(2)}s`;
+    if (message.type === 'audio') { audioQueue.push(message); playNext(); }
+    if (message.type === 'done') {
+      status.textContent = `Done · ${message.seconds.toFixed(1)}s`;
+      send.disabled = false;
+      input.focus();
+      if (pendingTranscript) { input.value = pendingTranscript; pendingTranscript = ''; ask(); }
+    }
+    if (message.type === 'error') { status.textContent = message.message; send.disabled = false; }
+  };
+}
+
+function connectListener() {
+  const websocketHost = location.protocol === 'file:' ? '127.0.0.1:8787' : location.host;
+  listenSocket = new WebSocket(`ws://${websocketHost}/listen`);
+  listenSocket.onclose = () => { if (listening) setTimeout(connectListener, 1000); };
+  listenSocket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.type === 'transcript') {
+      micState.textContent = `Heard in ${message.seconds.toFixed(2)}s`;
+      if (!message.text) return;
+      input.value = message.text;
+      if (send.disabled) pendingTranscript = message.text;
+      else ask();
+    }
+    if (message.type === 'transcription_error') micState.textContent = `STT error: ${message.message}`;
+  };
+}
+
+function playNext() {
+  if (playing || !audioQueue.length) return;
+  playing = true;
+  const item = audioQueue.shift();
+  const audio = currentAudio = new Audio(`data:audio/wav;base64,${item.wav}`);
+  metrics.textContent = `first audio ${item.readySeconds.toFixed(1)}s · ${item.duration.toFixed(1)}s voice`;
+  audio.onended = () => { playing = false; currentAudio = null; playNext(); };
+  audio.onerror = () => { playing = false; currentAudio = null; playNext(); };
+  audio.play();
+}
+
+function stopSpeechPlayback() {
+  audioQueue = [];
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  playing = false;
+}
+
+function blobToBase64(blob) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function submitUtterance(chunks, mimeType) {
+  const blob = new Blob(chunks, {type: mimeType});
+  if (blob.size < 1000 || listenSocket?.readyState !== WebSocket.OPEN) return;
+  micState.textContent = 'Transcribing…';
+  const audio = await blobToBase64(blob);
+  listenSocket.send(JSON.stringify({type: 'transcribe', audio, mimeType}));
+}
+
+function beginUtteranceRecording() {
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+  utteranceChunks = [];
+  utteranceRecorder = new MediaRecorder(micStream, {mimeType});
+  utteranceRecorder.ondataavailable = event => { if (event.data.size) utteranceChunks.push(event.data); };
+  utteranceRecorder.start();
+}
+
+function endUtteranceRecording(shouldSubmit) {
+  const finishedRecorder = utteranceRecorder;
+  if (!finishedRecorder || finishedRecorder.state === 'inactive') return;
+  const mimeType = finishedRecorder.mimeType;
+  finishedRecorder.onstop = () => {
+    const chunks = utteranceChunks;
+    utteranceChunks = [];
+    if (shouldSubmit) submitUtterance(chunks, mimeType);
+  };
+  finishedRecorder.stop();
+  utteranceRecorder = null;
+}
+
+function monitorMic() {
+  if (!listening) return;
+  const samples = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(samples);
+  let energy = 0;
+  for (const sample of samples) energy += sample * sample;
+  const rms = Math.sqrt(energy / samples.length);
+  levelBar.style.width = `${Math.min(100, rms * 1400)}%`;
+  const now = performance.now();
+
+  if (!muted && rms > SPEECH_THRESHOLD) {
+    silenceStartedAt = 0;
+    if (!speechActive) {
+      speechActive = true;
+      speechStartedAt = now;
+      beginUtteranceRecording();
+      micState.textContent = 'Listening…';
+      stopSpeechPlayback();
+    }
+  } else if (speechActive) {
+    if (!silenceStartedAt) silenceStartedAt = now;
+    if (now - silenceStartedAt >= END_SILENCE_MS) {
+      speechActive = false;
+      const duration = now - speechStartedAt;
+      endUtteranceRecording(duration >= MIN_SPEECH_MS);
+      if (duration < MIN_SPEECH_MS) micState.textContent = muted ? 'Muted' : 'Always listening';
+    }
+  }
+  requestAnimationFrame(monitorMic);
+}
+
+async function startListening() {
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true}
+  });
+  audioContext = new AudioContext();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 1024;
+  audioContext.createMediaStreamSource(micStream).connect(analyser);
+  listening = true;
+  listen.textContent = 'Listening';
+  listen.classList.add('live');
+  listen.disabled = true;
+  mute.disabled = false;
+  micState.textContent = 'Always listening';
+  connectListener();
+  monitorMic();
+}
+
+function ask() {
+  const text = input.value.trim();
+  if (!text || socket.readyState !== WebSocket.OPEN) return;
+  answer.textContent = '';
+  status.textContent = 'Starting…';
+  metrics.textContent = '';
+  send.disabled = true;
+  input.value = '';
+  socket.send(JSON.stringify({type: 'query', text, containerTag: 'hackathon-user', sessionId}));
+}
+
+send.onclick = ask;
+listen.onclick = () => startListening().catch(error => { micState.textContent = `Mic error: ${error.message}`; });
+mute.onclick = () => {
+  muted = !muted;
+  mute.textContent = muted ? 'Unmute' : 'Mute';
+  mute.classList.toggle('live', muted);
+  micState.textContent = muted ? 'Muted' : 'Always listening';
+};
+input.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); ask(); }
+});
+connect();
+</script>
+</body>
+</html>
