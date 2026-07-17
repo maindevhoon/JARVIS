@@ -15,6 +15,7 @@ import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from mlx_audio.tts.utils import load_model
 
 from meeting_agent import meeting_agent
@@ -70,6 +71,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Realtime Supermemory Voice", lifespan=lifespan)
+
+WEB_DIST = ROOT / "web" / "dist"
+if (WEB_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")
 
 
 async def search_memory(query: str, container: str) -> list[dict]:
@@ -426,6 +431,9 @@ async def listen_endpoint(websocket: WebSocket):
 
 @app.get("/")
 async def index():
+    web_index = WEB_DIST / "index.html"
+    if web_index.is_file():
+        return HTMLResponse(web_index.read_text())
     return HTMLResponse((ROOT / "realtime_voice.html").read_text())
 
 
