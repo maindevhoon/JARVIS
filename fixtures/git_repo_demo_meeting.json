@@ -1,0 +1,44 @@
+{
+  "meetingId": "jarvis-git-bootstrap-demo-001",
+  "title": "Supermemory App Account — Initial Project Kickoff",
+  "userName": "Dev",
+  "participants": ["Dev", "Maya", "Arjun"],
+  "nextMeeting": "Tomorrow at 10:00 AM",
+  "segments": [
+    {
+      "timestamp": "00:00:06",
+      "speaker": "Maya",
+      "text": "For this demo, we need a clean starting point for the Supermemory account application."
+    },
+    {
+      "timestamp": "00:00:18",
+      "speaker": "Maya",
+      "text": "Dev, please initialize an empty Git repository in a new folder named super-memory-app-account-initial-project. Do not add application code yet."
+    },
+    {
+      "timestamp": "00:00:34",
+      "speaker": "Maya",
+      "text": "Before we build, also research the smallest sensible repository structure, secret-handling rules, and initial documentation we should use for a Supermemory-backed account application. Prefer official Git and GitHub guidance."
+    },
+    {
+      "timestamp": "00:00:52",
+      "speaker": "Dev",
+      "text": "Understood. I own the repository bootstrap and the evidence-backed setup recommendation. I will bring both to tomorrow's review."
+    },
+    {
+      "timestamp": "00:01:05",
+      "speaker": "Arjun",
+      "text": "I will prepare the account-flow wireframes separately. That is my task, not Dev's."
+    },
+    {
+      "timestamp": "00:01:20",
+      "speaker": "Maya",
+      "text": "Decision: today we only approve the empty repository and setup brief. Any dependency installation, remote creation, commit, or push requires a separate confirmation."
+    },
+    {
+      "timestamp": "00:01:38",
+      "speaker": "Maya",
+      "text": "At the next meeting, Dev should report the repository location, the recommended initial files, and any security risks involving API keys or local memory data."
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SPEECH_THRESHOLD = 0.022;
-const END_SILENCE_MS = 700;
-const MIN_SPEECH_MS = 300;
+const MIN_SPEECH_THRESHOLD = 0.01;
+const SPEECH_ONSET_FRAMES = 5;
+const END_SILENCE_MS = 1800;
+const MIN_SPEECH_MS = 120;
 const CONTAINER_TAG = "hackathon-user";
 
 function wsUrl(path) {
@@ -26,6 +27,7 @@ export function useJarvisVoice() {
   const [sending, setSending] = useState(true);
   const [listening, setListening] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [pushToTalkActive, setPushToTalkActive] = useState(false);
   const [micState, setMicState] = useState("Mic off");
   const [level, setLevel] = useState(0);
 
@@ -37,6 +39,7 @@ export function useJarvisVoice() {
   const inputRef = useRef("");
   const sendingRef = useRef(true);
   const pendingTranscriptRef = useRef("");
+  const lastTranscriptRef = useRef({ text: "", at: 0 });
 
   const audioQueueRef = useRef([]);
   const playingRef = useRef(false);
@@ -52,6 +55,9 @@ export function useJarvisVoice() {
   const speechActiveRef = useRef(false);
   const speechStartedAtRef = useRef(0);
   const silenceStartedAtRef = useRef(0);
+  const noiseFloorRef = useRef(0.003);
+  const speechOnsetFramesRef = useRef(0);
+  const pushToTalkRef = useRef(false);
   const rafRef = useRef(null);
 
   useEffect(() => {
@@ -176,7 +182,7 @@ export function useJarvisVoice() {
 
   const submitUtterance = useCallback(async (chunks, mimeType) => {
     const blob = new Blob(chunks, { type: mimeType });
-    if (blob.size < 1000 || listenSocketRef.current?.readyState !== WebSocket.OPEN) {
+    if (blob.size < 400 || listenSocketRef.current?.readyState !== WebSocket.OPEN) {
       return;
     }
     setMicState("Transcribing…");
@@ -223,10 +229,24 @@ export function useJarvisVoice() {
     const rms = Math.sqrt(energy / samples.length);
     setLevel(Math.min(1, rms * 14));
     const now = performance.now();
+    if (pushToTalkRef.current) {
+      rafRef.current = requestAnimationFrame(monitorMic);
+      return;
+    }
+    // Calibrate against the room continuously while nobody is speaking. This
+    // keeps short, softly spoken commands from being rejected by a fixed gate.
+    if (!speechActiveRef.current && !mutedRef.current) {
+      noiseFloorRef.current = noiseFloorRef.current * 0.97 + rms * 0.03;
+    }
+    const speechThreshold = Math.max(
+      MIN_SPEECH_THRESHOLD,
+      noiseFloorRef.current * 2.1
+    );
 
-    if (!mutedRef.current && rms > SPEECH_THRESHOLD) {
+    if (!mutedRef.current && rms > speechThreshold) {
+      speechOnsetFramesRef.current += 1;
       silenceStartedAtRef.current = 0;
-      if (!speechActiveRef.current) {
+      if (!speechActiveRef.current && speechOnsetFramesRef.current >= SPEECH_ONSET_FRAMES) {
         speechActiveRef.current = true;
         speechStartedAtRef.current = now;
         beginUtteranceRecording();
@@ -234,6 +254,7 @@ export function useJarvisVoice() {
         stopSpeechPlayback();
       }
     } else if (speechActiveRef.current) {
+      speechOnsetFramesRef.current = 0;
       if (!silenceStartedAtRef.current) silenceStartedAtRef.current = now;
       if (now - silenceStartedAtRef.current >= END_SILENCE_MS) {
         speechActiveRef.current = false;
@@ -243,6 +264,8 @@ export function useJarvisVoice() {
           setMicState(mutedRef.current ? "Muted" : "Always listening");
         }
       }
+    } else {
+      speechOnsetFramesRef.current = 0;
     }
     rafRef.current = requestAnimationFrame(monitorMic);
   }, [beginUtteranceRecording, endUtteranceRecording, stopSpeechPlayback]);
@@ -257,12 +280,24 @@ export function useJarvisVoice() {
       const message = JSON.parse(event.data);
       if (message.type === "transcript") {
         setMicState(`Heard in ${message.seconds.toFixed(2)}s`);
-        if (!message.text) return;
-        setInputText(message.text);
+        const text = (message.text || "").trim();
+        if (!text) {
+          setMicState(mutedRef.current ? "Muted" : "Didn't hear anything");
+          return;
+        }
+        const normalized = text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const duplicate = normalized === lastTranscriptRef.current.text
+          && Date.now() - lastTranscriptRef.current.at < 30000;
+        if (duplicate) {
+          setMicState("Ignored repeated transcript");
+          return;
+        }
+        lastTranscriptRef.current = { text: normalized, at: Date.now() };
+        setInputText(text);
         if (sendingRef.current) {
-          pendingTranscriptRef.current = message.text;
+          pendingTranscriptRef.current = text;
         } else {
-          ask(message.text);
+          ask(text);
         }
       }
       if (message.type === "transcription_error") {
@@ -273,7 +308,13 @@ export function useJarvisVoice() {
 
   const startListening = useCallback(async () => {
     micStreamRef.current = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000,
+      },
     });
     const audioContext = new AudioContext();
     const analyser = audioContext.createAnalyser();
@@ -294,6 +335,24 @@ export function useJarvisVoice() {
     setMicState(mutedRef.current ? "Muted" : "Always listening");
   }, []);
 
+  const togglePushToTalk = useCallback(() => {
+    if (!listeningRef.current || mutedRef.current) return;
+    if (pushToTalkRef.current) {
+      pushToTalkRef.current = false;
+      setPushToTalkActive(false);
+      endUtteranceRecording(true);
+      setMicState("Transcribing…");
+      return;
+    }
+    const alreadyRecording = speechActiveRef.current;
+    speechActiveRef.current = false;
+    pushToTalkRef.current = true;
+    setPushToTalkActive(true);
+    if (!alreadyRecording) beginUtteranceRecording();
+    stopSpeechPlayback();
+    setMicState("Push to talk · tap again when done");
+  }, [beginUtteranceRecording, endUtteranceRecording, stopSpeechPlayback]);
+
   useEffect(() => {
     return () => {
       cancelAnimationFrame(rafRef.current);
@@ -313,9 +372,11 @@ export function useJarvisVoice() {
     ask,
     listening,
     muted,
+    pushToTalkActive,
     micState,
     level,
     startListening,
     toggleMute,
+    togglePushToTalk,
   };
 }
