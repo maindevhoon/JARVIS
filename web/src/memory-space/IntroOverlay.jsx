@@ -13,11 +13,11 @@ export default function IntroOverlay() {
       style={{ opacity: wrapperOpacity, pointerEvents: "none" }}
     >
       <div className="intro-heading">
-        <span className="intro-eyebrow">Memory Space</span>
-        <h1>JARVIS</h1>
+        <span className="intro-eyebrow">JARVIS Core</span>
+        <h1>System Initializing</h1>
       </div>
       <div className="intro-hint" style={{ opacity: hintOpacity }}>
-        Scroll to descend into memory
+        Loading memory systems · scroll to accelerate
       </div>
       <div className="intro-progress">
         <div

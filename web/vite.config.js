@@ -11,6 +11,10 @@ export default defineConfig({
       "/ws": { target: BACKEND, ws: true, changeOrigin: true },
       "/listen": { target: BACKEND, ws: true, changeOrigin: true },
       "/meeting": { target: BACKEND, changeOrigin: true },
+      "/meetings": { target: BACKEND, changeOrigin: true },
+      "/research": { target: BACKEND, changeOrigin: true },
+      "/memory": { target: BACKEND, changeOrigin: true },
+      "/supermemory": { target: "http://127.0.0.1:6767", changeOrigin: true, rewrite: (path) => path.replace(/^\/supermemory/, "") },
     },
   },
   build: {

@@ -16,6 +16,14 @@ const IDLE_TARGET = new THREE.Vector3(
   PORTAL_POINT.y,
   PORTAL_POINT.z - 20
 );
+const AUTO_FLIGHT_DELAY = 0.45;
+const AUTO_FLIGHT_DURATION = 4.8;
+
+function easeInOutCubic(value) {
+  return value < 0.5
+    ? 4 * value * value * value
+    : 1 - Math.pow(-2 * value + 2, 3) / 2;
+}
 
 export default function CameraRig() {
   const scroll = useScroll();
@@ -25,12 +33,16 @@ export default function CameraRig() {
   const enteredRef = useRef(false);
   const lastOffsetRef = useRef(0);
   const idleClockRef = useRef(0);
+  const introClockRef = useRef(0);
 
   useFrame((state, delta) => {
     const { camera } = state;
 
     if (phase === "intro") {
-      const offset = scroll.offset;
+      introClockRef.current += delta;
+      const elapsed = Math.max(0, introClockRef.current - AUTO_FLIGHT_DELAY);
+      const autoProgress = Math.min(1, elapsed / AUTO_FLIGHT_DURATION);
+      const offset = Math.max(scroll.offset, easeInOutCubic(autoProgress));
       const deltaOffset = offset - lastOffsetRef.current;
       lastOffsetRef.current = offset;
       setIntroOffset(offset);

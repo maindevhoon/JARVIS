@@ -1,15 +1,19 @@
 import asyncio
 import json
+import os
 
 import httpx
 
 
 BASE_URL = "http://127.0.0.1:8787"
+FIXTURE = os.getenv("MEETING_FIXTURE", "fixtures/dummy_meeting.json")
 
 
 async def main() -> None:
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(f"{BASE_URL}/meeting/simulate", json={})
+        response = await client.post(
+            f"{BASE_URL}/meeting/simulate", json={"fixture": FIXTURE}
+        )
         response.raise_for_status()
         job = response.json()
         job_id = job["jobId"]
@@ -34,8 +38,8 @@ async def main() -> None:
         print(f"research_reports={report_count}")
         print(f"elapsed_seconds={result['elapsedSeconds']}")
         print(json.dumps(result["reports"], indent=2))
-        if action_count != 1 or report_count != 1:
-            raise RuntimeError("Expected exactly one user-owned assignment and one research report")
+        if action_count < 1 or report_count != 1:
+            raise RuntimeError("Expected at least one user-owned action and exactly one research report")
         report = result["reports"][0]
         valid_source_ids = {source["sourceId"] for source in report.get("sources", [])}
         if report.get("conclusion") not in {"yes", "no", "only-if"}:
