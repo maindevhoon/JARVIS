@@ -15,6 +15,42 @@ const conciseMeetingFallback = (text) => {
   return `${clean.slice(0, 240).replace(/\s+\S*$/, "")}…`;
 };
 
+const briefDetailCache = new Map();
+
+async function loadStoredBrief(document) {
+  const cached = briefDetailCache.get(document.id);
+  if (cached?.updatedAt === document.updatedAt) return cached.brief;
+  const response = await fetch(`/supermemory/v3/documents/${document.id}`, {cache:"no-store"});
+  if (!response.ok) throw new Error(`Supermemory brief HTTP ${response.status}`);
+  const detail = await response.json();
+  let stored;
+  try { stored = JSON.parse(detail.content || "{}"); }
+  catch { return null; }
+  const kind = document.metadata?.kind;
+  const sourceJobId = document.metadata?.jobId || document.id;
+  let brief;
+  if (kind === "captured-meeting") {
+    const summary = stored.summary || {};
+    const transcript = stored.transcript || "";
+    brief = {
+      jobId:`memory-${document.id}`, sourceJobId, type:"meeting",
+      title:summary.title || "Meeting brief", createdAt:detail.createdAt || document.createdAt,
+      status:"completed", stage:"completed", events:[{message:"Synchronized from Supermemory"}],
+      result:{report:{title:summary.title || "Meeting brief",executiveSummary:summary.summary || conciseMeetingFallback(transcript)},extraction:{...summary,summary:summary.summary || conciseMeetingFallback(transcript)}}
+    };
+  } else if (kind === "research-report") {
+    const report = stored.report || stored;
+    brief = {
+      jobId:`memory-${document.id}`, sourceJobId, type:"research",
+      title:report.title || "Research brief", createdAt:detail.createdAt || document.createdAt,
+      status:"completed", stage:"completed", events:[{message:"Synchronized from Supermemory"}],
+      result:{report}
+    };
+  } else return null;
+  briefDetailCache.set(document.id, {updatedAt:document.updatedAt, brief});
+  return brief;
+}
+
 async function loadMemoryDirectly() {
   const containers = ["hackathon-user", "jarvis-meeting-demo"];
   const listAll = async (path, key, tag) => {
@@ -34,9 +70,14 @@ async function loadMemoryDirectly() {
   const memories = new Map(batches.slice(2).flat().filter((item) => item.id && !item.isForgotten).map((item) => [item.id, item]));
   const categoryMap = {};
   documents.forEach((item) => { const kind = item.metadata?.kind || "conversation"; categoryMap[kind] = (categoryMap[kind] || 0) + 1; });
+  const briefDocuments = [...documents.values()]
+    .filter((item) => ["captured-meeting", "research-report"].includes(item.metadata?.kind))
+    .sort((a,b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 20);
+  const briefs = (await Promise.all(briefDocuments.map(loadStoredBrief))).filter(Boolean);
   return {connected:true, structuredMemories:memories.size, uniqueDocuments:documents.size,
     categories:Object.entries(categoryMap).sort((a,b) => b[1]-a[1]).slice(0,4).map(([name,count]) => ({name:name.replaceAll("-"," "),count})),
-    recent:[...documents.values()].sort((a,b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))).slice(0,3).map((item) => ({id:item.id,title:String(item.title || item.metadata?.kind || "Memory").slice(0,120),createdAt:item.createdAt}))};
+    briefs};
 }
 
 export default function ResearchStatus({ question }) {
@@ -63,14 +104,15 @@ export default function ResearchStatus({ question }) {
         });
         return {jobs:[...research, ...meetingBriefs].sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)))};
       }),
-      fetch("/memory/overview", {cache:"no-store"}).then(async (response) => {
-        if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-          throw new Error(`Memory endpoint returned HTTP ${response.status}`);
-        }
-        return response.json();
-      }).catch(loadMemoryDirectly),
+      loadMemoryDirectly(),
     ]);
-    if (jobsResult.status === "fulfilled") {
+    if (jobsResult.status === "fulfilled" && memoryResult.status === "fulfilled") {
+      const merged = new Map();
+      for (const job of jobsResult.value.jobs || []) merged.set(job.sourceJobId || job.jobId.replace(/^meeting-/, ""), job);
+      for (const brief of memoryResult.value.briefs || []) merged.set(brief.sourceJobId, brief);
+      setJobs([...merged.values()].sort((a,b) => String(b.createdAt || "").localeCompare(String(a.createdAt || ""))));
+      setError("");
+    } else if (jobsResult.status === "fulfilled") {
       setJobs(jobsResult.value.jobs || []); setError("");
     } else {
       setError(`Couldn’t load activity: ${jobsResult.reason.message}`);
@@ -140,7 +182,7 @@ export default function ResearchStatus({ question }) {
 function BriefDialog({ job, onClose }) {
   const report = job.result?.report || job.result?.reports?.[0];
   const extraction = job.result?.extraction;
-  const commands = report?.commandPlan || [];
+  const commands = report?.commandPlan || extraction?.commandPlan || [];
   return (
     <div className="brief-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="brief-modal" role="dialog" aria-modal="true" aria-label={job.title}>

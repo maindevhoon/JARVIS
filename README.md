@@ -2,6 +2,8 @@
 
 JARVIS is a local-first personal AI assistant that turns meetings into durable memory and follow-up work. It captures user-authorized screen, system audio, and microphone input; produces concise meeting briefs; stores context in Supermemory Local; and runs evidence-backed research jobs in the background.
 
+![JARVIS end-to-end pipeline](assets/jarvis-pipeline.png)
+
 ## What it does
 
 - Always-listening voice input with push-to-talk, mute, adaptive noise filtering, and duplicate protection
@@ -12,6 +14,24 @@ JARVIS is a local-first personal AI assistant that turns meetings into durable m
 - Background research with evidence review, sources, and persisted reports
 - Streaming LLM responses and low-latency TTS with provider fallbacks
 - A compact dashboard for memory status, active agents, and current briefs
+
+## Built with Codex and GPT-5.6
+
+JARVIS was designed and implemented through a human-in-the-loop development workflow using **OpenAI Codex powered by GPT-5.6**. Codex was used as an engineering collaborator across the full project lifecycle—not as a runtime dependency of the assistant.
+
+Codex and GPT-5.6 helped with:
+
+- Translating the original personal-butler concept into a working React, FastAPI, WebSocket, and Supermemory architecture
+- Integrating Groq speech-to-text and inference, ElevenLabs and Kokoro speech synthesis, NVIDIA-backed research, and Supermemory Local
+- Designing the meeting-capture pipeline, speaker attribution, memory recall, research-agent workflow, and provider fallbacks
+- Diagnosing microphone sensitivity, audio segmentation, repeated transcripts, rate limits, stale dashboard state, and TTS latency
+- Iterating on the dashboard from an experimental visualization into a minimal, demo-ready workspace
+- Writing and running build checks, smoke tests, local API verification, browser-based UI checks, and GitHub publishing workflows
+- Producing the architecture infographic and the reusable pipeline image-generation specification
+
+The human developer remained responsible for product direction, API access, privacy decisions, testing the real meeting flow, and approving consequential changes. GPT-5.6 accelerated implementation and debugging while the final behavior stayed under human control.
+
+> **Development-time contribution:** Codex and GPT-5.6 helped build JARVIS. The running application uses the providers configured in the architecture below.
 
 ## Architecture
 
@@ -128,6 +148,8 @@ scripts/                     smoke tests and local test runners
 fixtures/                    deterministic meeting fixtures
 tools/qwen-tts-mlx/          reproducible Python/MLX runtime
 supermemory-api.json         local Supermemory OpenAPI reference
+PIPELINE_IMAGE_SPEC.md       reusable architecture-image specification
+assets/                      presentation and documentation assets
 ```
 
 ## Privacy and safety
